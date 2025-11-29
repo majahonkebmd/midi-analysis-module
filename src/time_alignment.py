@@ -2,28 +2,63 @@ import numpy as np
 from scipy.spatial.distance import euclidean
 from fastdtw import fastdtw
 import pretty_midi
-from typing import Dict, List, Tuple, Any
+from typing import Dict, List, Tuple, Any, Optional, Union
 import json
 
 class TimeAlignment:
-    def __init__(self, reference_midi: pretty_midi.PrettyMIDI, 
-                 performance_midi: pretty_midi.PrettyMIDI):
+    def __init__(self, reference_data: Union[pretty_midi.PrettyMIDI, Dict], 
+                 performance_data: Union[pretty_midi.PrettyMIDI, Dict]):
         """
-        Initialize time alignment with reference and performance MIDI files.
+        Initialize time alignment with reference and performance data.
+        Accepts either pretty_midi objects OR parsed data dictionaries.
         
         Args:
-            reference_midi: The reference/humanized MIDI (ground truth)
-            performance_midi: The student's performance MIDI to analyze
+            reference_data: Reference MIDI (ground truth) as PrettyMIDI object or parsed dict
+            performance_data: Performance MIDI to analyze as PrettyMIDI object or parsed dict
         """
-        self.reference_midi = reference_midi
-        self.performance_midi = performance_midi
+        # Handle reference data type
+        if isinstance(reference_data, dict) and 'notes' in reference_data:
+            self.reference_data = reference_data
+            self.reference_midi = None
+        elif isinstance(reference_data, pretty_midi.PrettyMIDI):
+            self.reference_midi = reference_data
+            self.reference_data = None
+        else:
+            raise ValueError("reference_data must be PrettyMIDI object or parsed dictionary with 'notes' key")
+            
+        # Handle performance data type
+        if isinstance(performance_data, dict) and 'notes' in performance_data:
+            self.performance_data = performance_data
+            self.performance_midi = None
+        elif isinstance(performance_data, pretty_midi.PrettyMIDI):
+            self.performance_midi = performance_data
+            self.performance_data = None
+        else:
+            raise ValueError("performance_data must be PrettyMIDI object or parsed dictionary with 'notes' key")
+        
         self.alignment_path = None
         self.warping_path = None
+    
+    def extract_note_sequence_from_parsed_data(self, parsed_data: Dict) -> np.ndarray:
+        """Extract features from your parser's output format"""
+        notes = []
+        for note in parsed_data['notes']:
+            feature_vector = [
+                note['start'],
+                note['duration'],
+                note['pitch'] / 127.0,  # Normalized pitch
+                note['velocity'] / 127.0  # Normalized velocity
+            ]
+            notes.append(feature_vector)
         
+        # Sort by start time
+        notes.sort(key=lambda x: x[0])
+        return np.array(notes)
+    
     def extract_note_sequence(self, midi: pretty_midi.PrettyMIDI, 
                             use_velocity: bool = True) -> np.ndarray:
         """
-        Extract note sequence for DTW alignment.
+        Extract note sequence for DTW alignment from PrettyMIDI object.
         Returns array of [start_time, duration, pitch, velocity] for each note.
         """
         notes = []
@@ -44,12 +79,20 @@ class TimeAlignment:
         notes.sort(key=lambda x: x[0])
         return np.array(notes)
     
-    def extract_beat_aligned_features(self, midi: pretty_midi.PrettyMIDI, 
+    def extract_beat_aligned_features(self, data: Union[pretty_midi.PrettyMIDI, Dict], 
                                     hop_length: float = 0.1) -> np.ndarray:
         """
         Extract beat-aligned features for more robust alignment.
         Creates a time series of musical features at regular intervals.
         """
+        if isinstance(data, pretty_midi.PrettyMIDI):
+            return self._extract_beat_aligned_features_from_midi(data, hop_length)
+        else:
+            return self._extract_beat_aligned_features_from_parsed(data, hop_length)
+    
+    def _extract_beat_aligned_features_from_midi(self, midi: pretty_midi.PrettyMIDI, 
+                                               hop_length: float) -> np.ndarray:
+        """Extract beat-aligned features from PrettyMIDI object."""
         # Get beats
         beats = midi.get_beats()
         if len(beats) == 0:
@@ -83,6 +126,44 @@ class TimeAlignment:
         
         return np.array(features)
     
+    def _extract_beat_aligned_features_from_parsed(self, parsed_data: Dict, 
+                                                 hop_length: float) -> np.ndarray:
+        """Extract beat-aligned features from parsed dictionary data."""
+        # For parsed data, create synthetic beats based on note timing
+        if not parsed_data['notes']:
+            return np.array([])
+        
+        start_times = [note['start'] for note in parsed_data['notes']]
+        end_times = [note['start'] + note['duration'] for note in parsed_data['notes']]
+        max_time = max(end_times) if end_times else 0
+        
+        # Create time grid
+        beats = np.arange(0, max_time + hop_length, hop_length)
+        
+        features = []
+        for beat_time in beats:
+            # Find active notes at this time
+            active_notes = []
+            for note in parsed_data['notes']:
+                if note['start'] <= beat_time <= (note['start'] + note['duration']):
+                    active_notes.append(note)
+            
+            # Compute features
+            if active_notes:
+                pitches = [n['pitch'] for n in active_notes]
+                velocities = [n['velocity'] for n in active_notes]
+                feature_vector = [
+                    np.mean(pitches) / 127.0,      # Average pitch
+                    len(active_notes),             # Note density
+                    np.mean(velocities) / 127.0,   # Average velocity
+                ]
+            else:
+                feature_vector = [0, 0, 0]
+                
+            features.append(feature_vector)
+        
+        return np.array(features)
+    
     def compute_dtw_alignment(self, method: str = 'note_sequence', 
                             **kwargs) -> Dict[str, Any]:
         """
@@ -95,12 +176,28 @@ class TimeAlignment:
         Returns:
             Dictionary containing alignment results
         """
+        # Choose the right feature extraction method based on input type
         if method == 'note_sequence':
-            ref_features = self.extract_note_sequence(self.reference_midi)
-            perf_features = self.extract_note_sequence(self.performance_midi)
+            if self.reference_midi:
+                ref_features = self.extract_note_sequence(self.reference_midi)
+            else:
+                ref_features = self.extract_note_sequence_from_parsed_data(self.reference_data)
+                
+            if self.performance_midi:
+                perf_features = self.extract_note_sequence(self.performance_midi)
+            else:
+                perf_features = self.extract_note_sequence_from_parsed_data(self.performance_data)
         else:  # 'beat_features'
-            ref_features = self.extract_beat_aligned_features(self.reference_midi)
-            perf_features = self.extract_beat_aligned_features(self.performance_midi)
+            ref_features = self.extract_beat_aligned_features(
+                self.reference_midi if self.reference_midi else self.reference_data
+            )
+            perf_features = self.extract_beat_aligned_features(
+                self.performance_midi if self.performance_midi else self.performance_data
+            )
+        
+        # Check if we have features to align
+        if len(ref_features) == 0 or len(perf_features) == 0:
+            raise ValueError("No features extracted from one or both input files")
         
         # Compute DTW
         distance, path = fastdtw(ref_features, perf_features, dist=euclidean)
@@ -114,7 +211,11 @@ class TimeAlignment:
             'refined_path': self.warping_path,
             'reference_features': ref_features.tolist(),
             'performance_features': perf_features.tolist(),
-            'alignment_quality': self._compute_alignment_quality(path, ref_features, perf_features)
+            'alignment_quality': self._compute_alignment_quality(path, ref_features, perf_features),
+            'input_types': {
+                'reference': 'midi' if self.reference_midi else 'parsed_data',
+                'performance': 'midi' if self.performance_midi else 'parsed_data'
+            }
         }
     
     def _refine_warping_path(self, path: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
@@ -159,6 +260,50 @@ class TimeAlignment:
             'alignment_length': len(path)
         }
     
+    def _get_all_notes_sorted_from_midi(self, midi: pretty_midi.PrettyMIDI) -> List[Dict[str, Any]]:
+        """Extract all notes from MIDI and sort by start time."""
+        notes = []
+        for instrument in midi.instruments:
+            for note in instrument.notes:
+                notes.append({
+                    'start': note.start,
+                    'end': note.end,
+                    'duration': note.end - note.start,
+                    'pitch': note.pitch,
+                    'velocity': note.velocity,
+                    'instrument': instrument.program if instrument.program else 0,
+                    'matched': False  # Track if this note has been matched
+                })
+        
+        # Sort by start time
+        notes.sort(key=lambda x: x['start'])
+        return notes
+    
+    def _get_all_notes_sorted_from_parsed(self, parsed_data: Dict) -> List[Dict[str, Any]]:
+        """Extract all notes from parsed data and sort by start time."""
+        notes = []
+        for note in parsed_data['notes']:
+            notes.append({
+                'start': note['start'],
+                'end': note['start'] + note['duration'],
+                'duration': note['duration'],
+                'pitch': note['pitch'],
+                'velocity': note['velocity'],
+                'instrument': note.get('instrument', 0),
+                'matched': False
+            })
+        
+        # Sort by start time
+        notes.sort(key=lambda x: x['start'])
+        return notes
+    
+    def _get_all_notes_sorted(self, data: Union[pretty_midi.PrettyMIDI, Dict]) -> List[Dict[str, Any]]:
+        """Extract all notes from either MIDI or parsed data and sort by start time."""
+        if isinstance(data, pretty_midi.PrettyMIDI):
+            return self._get_all_notes_sorted_from_midi(data)
+        else:
+            return self._get_all_notes_sorted_from_parsed(data)
+    
     def align_notes(self) -> List[Dict[str, Any]]:
         """
         Align individual notes between reference and performance.
@@ -167,8 +312,12 @@ class TimeAlignment:
         if self.warping_path is None:
             raise ValueError("Must compute DTW alignment first")
         
-        ref_notes = self._get_all_notes_sorted(self.reference_midi)
-        perf_notes = self._get_all_notes_sorted(self.performance_midi)
+        ref_notes = self._get_all_notes_sorted(
+            self.reference_midi if self.reference_midi else self.reference_data
+        )
+        perf_notes = self._get_all_notes_sorted(
+            self.performance_midi if self.performance_midi else self.performance_data
+        )
         
         aligned_pairs = []
         
@@ -227,25 +376,6 @@ class TimeAlignment:
         
         return aligned_pairs
     
-    def _get_all_notes_sorted(self, midi: pretty_midi.PrettyMIDI) -> List[Dict[str, Any]]:
-        """Extract all notes from MIDI and sort by start time."""
-        notes = []
-        for instrument in midi.instruments:
-            for note in instrument.notes:
-                notes.append({
-                    'start': note.start,
-                    'end': note.end,
-                    'duration': note.end - note.start,
-                    'pitch': note.pitch,
-                    'velocity': note.velocity,
-                    'instrument': instrument.program if instrument.program else 0,
-                    'matched': False  # Track if this note has been matched
-                })
-        
-        # Sort by start time
-        notes.sort(key=lambda x: x['start'])
-        return notes
-    
     def get_alignment_statistics(self, aligned_pairs: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Compute comprehensive alignment statistics."""
         matched_pairs = [p for p in aligned_pairs if p['performance_note'] is not None and p['reference_note'] is not None]
@@ -264,7 +394,7 @@ class TimeAlignment:
                 'successfully_aligned': len(matched_pairs),
                 'missing_notes': len(missing_notes),
                 'extra_notes': len(extra_notes),
-                'alignment_rate': len(matched_pairs) / len([p for p in aligned_pairs if p['reference_note'] is not None])
+                'alignment_rate': len(matched_pairs) / len([p for p in aligned_pairs if p['reference_note'] is not None]) if [p for p in aligned_pairs if p['reference_note'] is not None] else 0
             },
             'timing_analysis': {
                 'mean_time_difference': float(np.mean(time_differences)) if time_differences else 0,
@@ -292,6 +422,7 @@ class TimeAlignment:
         report = {
             'alignment_method': 'dtw_note_sequence',
             'timestamp': np.datetime64('now').astype(str),
+            'input_types': alignment_result['input_types'],
             'alignment_metrics': alignment_result['alignment_quality'],
             'note_alignment': aligned_notes,
             'statistics': statistics,
@@ -303,7 +434,7 @@ class TimeAlignment:
         
         return report
 
-# Utility function for easy usage
+# Utility functions for easy usage
 def align_midi_files(reference_path: str, performance_path: str, 
                     output_report: str = None) -> Dict[str, Any]:
     """
@@ -321,6 +452,24 @@ def align_midi_files(reference_path: str, performance_path: str,
     performance_midi = pretty_midi.PrettyMIDI(performance_path)
     
     aligner = TimeAlignment(reference_midi, performance_midi)
+    report = aligner.export_alignment_report(output_report or 'alignment_report.json')
+    
+    return report
+
+def align_parsed_data(reference_data: Dict, performance_data: Dict,
+                     output_report: str = None) -> Dict[str, Any]:
+    """
+    Convenience function to align two parsed data dictionaries and optionally save report.
+    
+    Args:
+        reference_data: Parsed reference data dictionary
+        performance_data: Parsed performance data dictionary
+        output_report: Optional path to save alignment report
+        
+    Returns:
+        Alignment results dictionary
+    """
+    aligner = TimeAlignment(reference_data, performance_data)
     report = aligner.export_alignment_report(output_report or 'alignment_report.json')
     
     return report
