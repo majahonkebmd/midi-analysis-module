@@ -306,3 +306,33 @@ def compare_performance(reference_path: str, performance_path: str,
     """Compare performance against reference."""
     analyzer = MIDIAnalyzer()
     return analyzer.analyze_with_reference(reference_path, performance_path, output_dir)
+
+def print_parsed_data(self, performance_path: str):
+    """
+    Parse a MIDI file and print the parsed data structure.
+    """
+    try:
+        performance_data = self.parser.parse_midi(performance_path)
+        
+        print("\n" + "="*50)
+        print("MIDI PARSED DATA")
+        print("="*50)
+        print(f"Total notes: {len(performance_data.get('notes', []))}")
+        print(f"Total duration: {performance_data.get('total_duration', 0):.2f} seconds")
+        print(f"Instruments: {performance_data.get('instruments', [])}")
+        
+        print("\nFIRST 5 NOTES:")
+        notes = performance_data.get('notes', [])
+        for i, note in enumerate(notes[:5]):
+            print(f"Note {i+1}: pitch={note['pitch']}, start={note['start']:.2f}s, "
+                  f"duration={note['duration']:.2f}s, velocity={note['velocity']}")
+        
+        if len(notes) > 5:
+            print(f"... and {len(notes) - 5} more notes")
+            
+        return performance_data
+        
+    except Exception as e:
+        print(f"Error parsing MIDI file: {e}")
+        return None
+    
