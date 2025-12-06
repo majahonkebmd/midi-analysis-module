@@ -54,10 +54,11 @@ class MIDIAnalyzer:
         
         return self.analysis_results
     
+# Update the analyze_with_reference method in analyzer.py (around line 86-95)
     def analyze_with_reference(self, 
-                             reference_path: str, 
-                             performance_path: str,
-                             output_dir: Optional[str] = None) -> Dict[str, Any]:
+                            reference_path: str, 
+                            performance_path: str,
+                            output_dir: Optional[str] = None) -> Dict[str, Any]:
         """
         Comprehensive analysis comparing performance with reference.
         
@@ -81,26 +82,31 @@ class MIDIAnalyzer:
         if not reference_parsed or not performance_parsed:
             raise ValueError("Failed to parse one or both MIDI files")
         
-        # Get pretty_midi objects for time alignment
-        # Note: This requires that MIDIParser stores the pretty_midi object
-        reference_midi = self.parser.get_pretty_midi_object()
-        
-        # Re-parse performance to get its pretty_midi object
-        # Alternatively, modify MIDIParser to handle multiple files
-        import pretty_midi
-        performance_midi = pretty_midi.PrettyMIDI(performance_path)
-        
-        # Time alignment
+        # Create PrettyMIDI objects directly for time alignment
         print("2. Performing time alignment...")
-        aligner = TimeAlignment(reference_midi, performance_midi)
+        import pretty_midi
+        
+        try:
+            # Create PrettyMIDI objects from file paths
+            reference_midi = pretty_midi.PrettyMIDI(reference_path)
+            performance_midi = pretty_midi.PrettyMIDI(performance_path)
+            
+            aligner = TimeAlignment(reference_midi, performance_midi)
+        except Exception as e:
+            print(f"Warning: Could not create PrettyMIDI objects, using parsed data: {e}")
+            # Fall back to using parsed data
+            aligner = TimeAlignment(reference_parsed, performance_parsed)
+        
         alignment_result = aligner.compute_dtw_alignment()
         aligned_notes = aligner.align_notes()
         alignment_stats = aligner.get_alignment_statistics(aligned_notes)
         
+        # Rest of the method remains the same...
         # Phrase segmentation (on reference)
         print("3. Segmenting musical phrases...")
         phrase_segmenter = PhraseSegmentation(reference_parsed)
         segmented_data = phrase_segmenter.segment_phrases()
+        
         
         # Error analysis
         print("4. Analyzing performance errors...")
@@ -109,7 +115,7 @@ class MIDIAnalyzer:
             'performance': performance_parsed,
             'alignment': aligned_notes
         })
-        error_analysis = error_analyzer.analyze_performance()
+        error_analysis = error_analyzer.analyze_performance()  
         
         # JSON summarization for GPT
         print("5. Generating comprehensive summary...")
@@ -150,7 +156,6 @@ class MIDIAnalyzer:
         
         print("Analysis complete!")
         return self.analysis_results
-    
     def _calculate_basic_metrics(self, notes: List[Dict], total_duration: float) -> Dict[str, Any]:
         """Calculate basic performance metrics for solo analysis."""
         if not notes:

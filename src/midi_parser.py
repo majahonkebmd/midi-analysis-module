@@ -49,8 +49,15 @@ class MIDIParser:
     
     def _extract_metadata(self) -> Dict:
         """Extract MIDI file metadata."""
+        # Calculate total duration from the actual notes, not just get_end_time()
+        notes = self._extract_notes()
+        if notes:
+            max_end_time = max(note['end'] for note in notes)
+        else:
+            max_end_time = self.midi_data.get_end_time() if self.midi_data else 0
+        
         return {
-            'total_duration': self.midi_data.get_end_time(),
+            'total_duration': max_end_time,  # Use the actual maximum end time
             'instruments': [
                 {
                     'name': inst.name,
@@ -67,7 +74,6 @@ class MIDIParser:
             ],
             'lyrics': [ly.text for ly in self.midi_data.lyrics] if hasattr(self.midi_data, 'lyrics') else []
         }
-    
     def _extract_timing_info(self) -> Dict:
         """Extract tempo and time signature information."""
         # Get beats and downbeats for rhythmic analysis
