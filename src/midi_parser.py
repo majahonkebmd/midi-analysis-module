@@ -75,13 +75,13 @@ class MIDIParser:
         downbeats = self.midi_data.get_downbeats()
         
         return {
-            'tempo_changes': [
-                {
-                    'tempo': tc.tempo,
-                    'time': tc.time,
-                    'bpm': tc.tempo
-                } for tc in self.midi_data.tempo_changes
-            ],
+            # 'tempo_changes': [
+            #     {
+            #         'tempo': tc.tempo,
+            #         'time': tc.time,
+            #         'bpm': tc.tempo
+            #     } for tc in self.midi_data.tempo_changes
+            # ],
             'time_signature_changes': [
                 {
                     'numerator': ts.numerator,
@@ -177,3 +177,7 @@ class MIDIParser:
     def _analyze_articulation(self, notes: List[Dict]) -> Dict:
         """Analyze articulation patterns (staccato, legato)."""
         return {}
+    
+    def get_pretty_midi_object():
+        return {}
+    
