@@ -1,15 +1,17 @@
-pretty_midi>=0.2.9
-music21>=8.0.0
-fastdtw>=0.3.4
-numpy>=1.21.0
-scipy>=1.7.0
-pytest>=6.0.0
-python-dotenv>=0.19.0
-
+# Core MIDI processing
 pretty-midi>=0.2.10
 mido>=1.2.0
-python-rtmidi>=1.4.0
+#python-rtmidi>=1.4.0
+
+# Analysis & algorithms
 numpy>=1.19.0
 scipy>=1.5.0
-#fastdtw>=0.3.4
-matplotlib>=3.3.0  
+fastdtw>=0.3.4
+
+# Visualization & data
+matplotlib>=3.3.0
+pandas>=1.5.0
+
+# Build tools
+setuptools>=65.5.0
+wheel>=0.38.0
