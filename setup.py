@@ -1,26 +1,27 @@
-# setup.py - Minimal working version
-import sys
+from pathlib import Path
+from setuptools import find_packages, setup
 
-print(f"Python version: {sys.version}")
-print("MIDI Analysis Module setup")
 
-# Just define package info - no setup() call needed for basic use
-package_info = {
-    'name': 'midi-analysis-module',
-    'version': '0.1.0',
-    'dependencies': [
-        'pretty-midi',
-        'mido', 
-        'python-rtmidi',
-        'numpy',
-        'scipy',
-        'fastdtw',
-        'matplotlib',
-        'pandas',
-        'openai'
-    ]
-}
+ROOT = Path(__file__).resolve().parent
 
-print(f"\nPackage: {package_info['name']} v{package_info['version']}")
-print("\nInstall dependencies with:")
-print("  pip install -r requirements.txt")
+
+def _read_requirements(path: Path) -> list[str]:
+    reqs: list[str] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        raw = line.strip()
+        if not raw or raw.startswith("#"):
+            continue
+        reqs.append(raw)
+    return reqs
+
+
+setup(
+    name="midi-analysis-module",
+    version="0.1.0",
+    description="Educational MIDI analysis tool for piano pedagogy",
+    long_description=(ROOT / "README.md").read_text(encoding="utf-8"),
+    long_description_content_type="text/markdown",
+    packages=find_packages(),
+    install_requires=_read_requirements(ROOT / "requirements.txt"),
+    python_requires=">=3.10",
+)

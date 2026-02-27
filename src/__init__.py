@@ -47,8 +47,6 @@ package_info = {
     ]
 }
 
-print(f"Loaded MIDI Analysis Module v{__version__}")
-
 
 def __getattr__(name):
     if name in {"GPTTutor", "create_tutor_feedback"}:

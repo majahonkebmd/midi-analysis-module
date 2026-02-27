@@ -203,12 +203,14 @@ Fix:
 
 ## Optional Legacy Script
 
-There is also an interactive test script:
+There is also a CLI smoke-test script:
 
 ```bash
-python test_midi_analysis.py
+python test_midi_analysis.py list
+python test_midi_analysis.py solo --midi sample_files/performance.mid
+python test_midi_analysis.py compare --reference sample_files/reference.mid --performance sample_files/performance.mid
 ```
 
 Note:
-- It contains hardcoded local paths and is mainly for manual experimentation.
-- For reliable usage, prefer the direct commands above.
+- It uses relative paths by default and supports explicit path overrides.
+- For production usage, prefer the direct commands above.

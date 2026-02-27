@@ -1,7 +1,6 @@
 import json
 from datetime import datetime
 from typing import Dict, List, Any, Optional
-import textwrap
 import statistics
 
 class JSONSummarization:
@@ -95,6 +94,7 @@ class JSONSummarization:
         # Extract key metrics with fallbacks
         note_accuracy = error_metrics.get('note_accuracy', {}).get('accuracy_percentage', 0)
         timing_errors = error_metrics.get('timing_errors', {})
+        reliability = error_metrics.get('alignment_reliability', {})
         
         return {
             'overall_assessment': {
@@ -104,10 +104,15 @@ class JSONSummarization:
             },
             'key_metrics': {
                 'note_accuracy': f"{note_accuracy:.1f}%",
-                'timing_consistency': f"+/-{timing_errors.get('std_error_ms', 0):.1f} ms",
+                'timing_consistency': (
+                    f"+/-{timing_errors.get('std_error_ms', 0):.1f} ms"
+                    if timing_errors.get('available', True) and timing_errors.get('std_error_ms') is not None
+                    else "N/A (insufficient aligned pairs)"
+                ),
                 'dynamic_range': error_metrics.get('dynamic_control', {}).get('dynamic_range', 0),
                 'rhythmic_consistency': error_metrics.get('rhythmic_consistency', {}).get('duration_consistency_score', 0)
             },
+            'analysis_reliability': reliability,
             'strengths': self.error_analysis.get('performance_summary', {}).get('strengths', []),
             'weaknesses': self.error_analysis.get('performance_summary', {}).get('weaknesses', []),
             'performance_characteristics': self._identify_performance_characteristics()
@@ -154,6 +159,8 @@ class JSONSummarization:
         """Create structured practice recommendations."""
         recommendations = self.error_analysis.get('practice_recommendations', [])
         next_steps = self.error_analysis.get('performance_summary', {}).get('next_steps', [])
+        recommendations = self._dedupe_text_list(recommendations)
+        next_steps = self._dedupe_text_list(next_steps)
         
         # Categorize recommendations
         categorized = {
@@ -163,7 +170,7 @@ class JSONSummarization:
             'general': []
         }
         
-        all_recs = recommendations + next_steps
+        all_recs = self._dedupe_text_list(recommendations + next_steps)
         for rec in all_recs:
             rec_lower = rec.lower()
             if any(word in rec_lower for word in ['focus', 'urgent', 'critical', 'significant']):
@@ -189,11 +196,6 @@ class JSONSummarization:
         reference_notes = self.reference_data.get('notes', [])
         
         return {
-            'structure_analysis': {
-                'phrase_count': len(self.phrases.get('phrases', [])) if isinstance(self.phrases, dict) else 0,
-                'section_count': len(self.phrases.get('sections', [])) if isinstance(self.phrases, dict) else 0,
-                'form': self._analyze_musical_form()
-            },
             'technical_difficulty': {
                 'level': self._assess_technical_difficulty(reference_notes),
                 'challenging_sections': self._identify_challenging_sections(),
@@ -337,10 +339,18 @@ class JSONSummarization:
     
     def _summarize_timing_errors(self, timing_data: Dict) -> str:
         """Create summary text for timing errors."""
-        mean_error = timing_data.get('mean_error_ms', 0)
-        std_error = timing_data.get('std_error_ms', 0)
-        rushing = timing_data.get('rushing_percentage', 0)
-        dragging = timing_data.get('dragging_percentage', 0)
+        if not timing_data.get('available', True):
+            return "Timing analysis unavailable (insufficient aligned notes)."
+
+        mean_raw = timing_data.get('mean_error_ms', 0)
+        std_raw = timing_data.get('std_error_ms', 0)
+        rushing_raw = timing_data.get('rushing_percentage', 0)
+        dragging_raw = timing_data.get('dragging_percentage', 0)
+
+        mean_error = float(mean_raw) if isinstance(mean_raw, (int, float)) else 0.0
+        std_error = float(std_raw) if isinstance(std_raw, (int, float)) else 0.0
+        rushing = float(rushing_raw) if isinstance(rushing_raw, (int, float)) else 0.0
+        dragging = float(dragging_raw) if isinstance(dragging_raw, (int, float)) else 0.0
         
         if abs(mean_error) < 20 and std_error < 30:
             return "Excellent timing control with precise rhythm."
@@ -372,9 +382,16 @@ class JSONSummarization:
     
     def _determine_timing_priority(self, timing_data: Dict) -> str:
         """Determine priority level for timing issues."""
-        std_error = timing_data.get('std_error_ms', 0)
-        rushing = timing_data.get('rushing_percentage', 0)
-        dragging = timing_data.get('dragging_percentage', 0)
+        if not timing_data.get('available', True):
+            return 'low'
+
+        std_raw = timing_data.get('std_error_ms', 0)
+        rushing_raw = timing_data.get('rushing_percentage', 0)
+        dragging_raw = timing_data.get('dragging_percentage', 0)
+
+        std_error = float(std_raw) if isinstance(std_raw, (int, float)) else 0.0
+        rushing = float(rushing_raw) if isinstance(rushing_raw, (int, float)) else 0.0
+        dragging = float(dragging_raw) if isinstance(dragging_raw, (int, float)) else 0.0
         
         if std_error > 80 or max(rushing, dragging) > 40:
             return 'high'
@@ -574,7 +591,9 @@ class JSONSummarization:
         
         # Timing exercises
         timing = error_metrics.get('timing_errors', {})
-        if timing.get('std_error_ms', 0) > 50:
+        std_raw = timing.get('std_error_ms', 0)
+        std_error = float(std_raw) if isinstance(std_raw, (int, float)) else 0.0
+        if std_error > 50:
             exercises.append("Practice with metronome at slow tempo (50% of performance tempo)")
         
         # Dynamic exercises
@@ -741,7 +760,9 @@ class JSONSummarization:
             priorities.append("Note accuracy")
         
         timing = error_metrics.get('timing_errors', {})
-        if timing.get('std_error_ms', 0) > 60:
+        std_raw = timing.get('std_error_ms', 0)
+        std_error = float(std_raw) if isinstance(std_raw, (int, float)) else 0.0
+        if std_error > 60:
             priorities.append("Timing consistency")
         
         return priorities[:2] if priorities else ["Musical expression"]
@@ -871,9 +892,21 @@ class JSONSummarization:
         return {
             'raw_alignment': self.alignment[:100],  # First 100 aligned pairs
             'error_categories': self.error_analysis.get('error_categories', {}),
-            'phrase_data': self.phrases,
             'note_level_analysis': self._extract_note_level_data()
         }
+
+    def _dedupe_text_list(self, items: List[str]) -> List[str]:
+        out: List[str] = []
+        seen = set()
+        for item in items:
+            if not isinstance(item, str):
+                continue
+            key = item.strip().lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            out.append(item.strip())
+        return out
     
     def _extract_note_level_data(self) -> List[Dict]:
         """Extract note-level analysis data."""
@@ -941,12 +974,14 @@ def create_minimal_summary(analysis_data: Dict[str, Any]) -> Dict[str, Any]:
     error_analysis = analysis_data.get('error_analysis', {})
     metrics = error_analysis.get('metrics', {})
     score_data = metrics.get('performance_score', {})
+    timing_raw = metrics.get('timing_errors', {}).get('std_error_ms', 0)
+    timing_consistency = float(timing_raw) if isinstance(timing_raw, (int, float)) else 0.0
     
     return {
         'overall_grade': score_data.get('grade', 'N/A'),
         'overall_score': score_data.get('overall_score', 0),
         'note_accuracy': metrics.get('note_accuracy', {}).get('accuracy_percentage', 0),
-        'timing_consistency': metrics.get('timing_errors', {}).get('std_error_ms', 0),
+        'timing_consistency': timing_consistency,
         'top_recommendation': error_analysis.get('practice_recommendations', [''])[0] if error_analysis.get('practice_recommendations') else '',
         'timestamp': datetime.now().isoformat()
     }
