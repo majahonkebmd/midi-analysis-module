@@ -82,6 +82,12 @@ python -c "import os; k=os.getenv('OPENAI_API_KEY',''); print('set=',bool(k), 'l
 python -c "from src.analyzer import compare_performance; compare_performance('sample_files/reference.mid','sample_files/performance.mid','analysis_results')"
 ```
 
+Paper-based note matcher (ASAP/parangonar, best automatic model from the paper: `hDTW+sym`):
+
+```bash
+python -c "from src.analyzer import compare_performance; compare_performance('sample_files/reference.mid','sample_files/performance.mid','analysis_results', alignment_backend='paper_best', alignment_model='automatic_hdtw_sym')"
+```
+
 Generates:
 
 - `analysis_results/full_analysis.json`
