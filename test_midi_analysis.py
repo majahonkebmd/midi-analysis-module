@@ -55,7 +55,13 @@ def run_solo(midi_path: Path) -> int:
     return 0
 
 
-def run_compare(reference_path: Path, performance_path: Path, output_dir: Path) -> int:
+def run_compare(
+    reference_path: Path,
+    performance_path: Path,
+    output_dir: Path,
+    alignment_backend: str = "native",
+    alignment_model: str = "automatic_hdtw_sym",
+) -> int:
     if not reference_path.exists():
         print(f"Reference file not found: {reference_path}")
         return 2
@@ -68,6 +74,8 @@ def run_compare(reference_path: Path, performance_path: Path, output_dir: Path) 
         reference_path=str(reference_path),
         performance_path=str(performance_path),
         output_dir=str(output_dir),
+        alignment_backend=alignment_backend,
+        alignment_model=alignment_model,
     )
 
     print(f"Analysis complete. Results saved to: {output_dir}")
@@ -123,6 +131,19 @@ def main() -> int:
     p_compare.add_argument("--reference", type=Path, default=SAMPLE_DIR / "reference.mid")
     p_compare.add_argument("--performance", type=Path, default=SAMPLE_DIR / "performance.mid")
     p_compare.add_argument("--output", type=Path, default=ROOT / "analysis_results")
+    p_compare.add_argument(
+        "--alignment-backend",
+        type=str,
+        default="native",
+        choices=["native", "paper_best"],
+        help="Choose alignment engine.",
+    )
+    p_compare.add_argument(
+        "--alignment-model",
+        type=str,
+        default="automatic_hdtw_sym",
+        help="Paper backend model (used only when --alignment-backend=paper_best).",
+    )
 
     p_create = sub.add_parser("create-test-midi", help="Create a simple C-major scale MIDI")
     p_create.add_argument("--output", type=Path, default=SAMPLE_DIR / "test_scale.mid")
@@ -134,7 +155,13 @@ def main() -> int:
     if args.command == "solo":
         return run_solo(args.midi.resolve())
     if args.command == "compare":
-        return run_compare(args.reference.resolve(), args.performance.resolve(), args.output.resolve())
+        return run_compare(
+            args.reference.resolve(),
+            args.performance.resolve(),
+            args.output.resolve(),
+            alignment_backend=args.alignment_backend,
+            alignment_model=args.alignment_model,
+        )
     if args.command == "create-test-midi":
         return run_create_test_midi(args.output.resolve())
 

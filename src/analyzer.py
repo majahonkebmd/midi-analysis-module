@@ -8,6 +8,10 @@ Supports BOTH time_alignment APIs:
 (OLD) TimeAlignment.compute_dtw_alignment(); align_notes(); get_alignment_statistics(aligned_notes)
 
 This prevents breakage when time_alignment.py is updated.
+
+Also supports backend selection:
+- native: src.time_alignment.TimeAlignment (default)
+- paper_best: src.paper_time_alignment.PaperBestTimeAlignment (parangonar)
 """
 
 import os
@@ -16,6 +20,7 @@ from typing import Dict, List, Any, Optional, Tuple
 
 from .midi_parser import MIDIParser
 from .time_alignment import TimeAlignment
+from .paper_time_alignment import PaperBestTimeAlignment
 from .error_analysis import ErrorAnalysis
 from .json_summarization import JSONSummarization
 
@@ -66,6 +71,8 @@ class MIDIAnalyzer:
         reference_path: str,
         performance_path: str,
         output_dir: Optional[str] = None,
+        alignment_backend: str = "native",
+        alignment_model: str = "automatic_hdtw_sym",
     ) -> Dict[str, Any]:
         print("Analyzing performance against reference...")
         print(f"Reference: {reference_path}")
@@ -80,7 +87,15 @@ class MIDIAnalyzer:
 
         # 2) Time alignment (supports both new/old time_alignment APIs)
         print("2. Performing time alignment...")
-        aligner = self._build_time_aligner(reference_path, performance_path, reference_parsed, performance_parsed)
+        print(f"   Backend: {alignment_backend}")
+        aligner = self._build_time_aligner(
+            reference_path,
+            performance_path,
+            reference_parsed,
+            performance_parsed,
+            alignment_backend=alignment_backend,
+            alignment_model=alignment_model,
+        )
 
         aligned_notes, alignment_stats, alignment_debug = self._run_time_alignment_compat(aligner)
 
@@ -112,6 +127,8 @@ class MIDIAnalyzer:
             "analysis_type": "reference_comparison",
             "reference_file": reference_path,
             "performance_file": performance_path,
+            "alignment_backend": alignment_backend,
+            "alignment_model": alignment_model if alignment_backend == "paper_best" else None,
             "timestamp": self._get_timestamp(),
             "parsed_data": {"reference": reference_parsed, "performance": performance_parsed},
             "time_alignment": {
@@ -252,11 +269,23 @@ class MIDIAnalyzer:
         performance_path: str,
         reference_parsed: Dict[str, Any],
         performance_parsed: Dict[str, Any],
+        alignment_backend: str = "native",
+        alignment_model: str = "automatic_hdtw_sym",
     ) -> Any:
         """
-        Create a TimeAlignment instance using PrettyMIDI if possible,
-        otherwise fall back to parsed dicts.
+        Create the requested alignment backend.
         """
+        backend = (alignment_backend or "native").strip().lower()
+
+        if backend == "paper_best":
+            return PaperBestTimeAlignment(reference_path, performance_path, model=alignment_model)
+
+        if backend != "native":
+            raise ValueError(
+                f"Unsupported alignment_backend={alignment_backend!r}. "
+                "Use 'native' or 'paper_best'."
+            )
+
         try:
             import pretty_midi
 
@@ -447,6 +476,14 @@ def compare_performance(
     reference_path: str,
     performance_path: str,
     output_dir: Optional[str] = None,
+    alignment_backend: str = "native",
+    alignment_model: str = "automatic_hdtw_sym",
 ) -> Dict[str, Any]:
     analyzer = MIDIAnalyzer()
-    return analyzer.analyze_with_reference(reference_path, performance_path, output_dir)
+    return analyzer.analyze_with_reference(
+        reference_path,
+        performance_path,
+        output_dir,
+        alignment_backend=alignment_backend,
+        alignment_model=alignment_model,
+    )
