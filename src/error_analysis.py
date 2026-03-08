@@ -45,6 +45,7 @@ class ErrorAnalysis:
         
         # Run all analysis modules
         self._analyze_note_accuracy()
+        self._analyze_alignment_reliability()
         self._analyze_timing_errors()
         self._analyze_rhythmic_consistency()
         self._analyze_dynamic_control()
@@ -64,6 +65,25 @@ class ErrorAnalysis:
             'practice_recommendations': self.practice_recommendations,
             'detailed_errors': self._get_detailed_error_list(),
             'performance_summary': self._get_performance_summary()
+        }
+
+    def _analyze_alignment_reliability(self):
+        """Flag whether there are enough aligned note pairs for stable error metrics."""
+        aligned_pairs = [
+            p for p in self.aligned_notes
+            if p.get('reference_note') and p.get('performance_note')
+        ]
+        reference_pairs = [p for p in self.aligned_notes if p.get('reference_note')]
+
+        min_required = max(10, int(0.05 * max(1, len(reference_pairs))))
+        is_reliable = len(aligned_pairs) >= min_required
+
+        self.metrics['alignment_reliability'] = {
+            'is_reliable': bool(is_reliable),
+            'insufficient_alignment': bool(not is_reliable),
+            'aligned_pair_count': int(len(aligned_pairs)),
+            'minimum_required_aligned_pairs': int(min_required),
+            'reason': None if is_reliable else 'too_few_aligned_pairs_for_stable_metrics',
         }
     
     def _analyze_note_accuracy(self):
@@ -122,6 +142,24 @@ class ErrorAnalysis:
                         if p.get('reference_note') and p.get('performance_note')]
         
         if not aligned_pairs:
+            self.metrics['timing_errors'] = {
+                'available': False,
+                'reason': 'no_aligned_pairs',
+                'mean_error_ms': None,
+                'std_error_ms': None,
+                'max_error_ms': None,
+                'rushing_count': 0,
+                'dragging_count': 0,
+                'accurate_count': 0,
+                'rushing_percentage': 0.0,
+                'dragging_percentage': 0.0,
+                'rhythmic_patterns': []
+            }
+            self.error_categories['timing'] = {
+                'rushing': [],
+                'dragging': [],
+                'accurate': []
+            }
             return
         
         time_differences = [pair.get('time_difference', 0) for pair in aligned_pairs]
@@ -148,6 +186,7 @@ class ErrorAnalysis:
             rhythmic_patterns = []
         
         self.metrics['timing_errors'] = {
+            'available': True,
             'mean_error_ms': round(mean_error * 1000, 1),  # Convert to milliseconds
             'std_error_ms': round(std_error * 1000, 1),
             'max_error_ms': round(max_error * 1000, 1),
@@ -257,6 +296,10 @@ class ErrorAnalysis:
         """Analyze dynamic (velocity) control and expression."""
         reference_notes = self.reference_data.get('notes', [])
         performance_notes = self.performance_data.get('notes', [])
+        aligned_pairs = [
+            p for p in self.aligned_notes
+            if p.get('reference_note') and p.get('performance_note')
+        ]
         
         if not reference_notes or not performance_notes:
             return
@@ -272,13 +315,15 @@ class ErrorAnalysis:
         # Analyze crescendo/decrescendo patterns
         dynamic_patterns = self._analyze_dynamic_patterns(perf_velocities)
         
-        # Compare with reference dynamics
-        dynamic_deviation = 0
-        if ref_velocities and perf_velocities:
-            min_len = min(len(ref_velocities), len(perf_velocities))
-            for i in range(min_len):
-                dynamic_deviation += abs(perf_velocities[i] - ref_velocities[i])
-            dynamic_deviation /= min_len
+        # Compare with reference dynamics on aligned note pairs only.
+        dynamic_deviation = None
+        if aligned_pairs:
+            diffs = [
+                abs(int(p['performance_note'].get('velocity', 0)) - int(p['reference_note'].get('velocity', 0)))
+                for p in aligned_pairs
+            ]
+            if diffs:
+                dynamic_deviation = sum(diffs) / len(diffs)
         
         self.metrics['dynamic_control'] = {
             'dynamic_range': int(dynamic_range),
@@ -286,7 +331,8 @@ class ErrorAnalysis:
             'dynamic_variety': round(dynamic_variety, 2),
             'average_velocity': round(statistics.mean(perf_velocities), 1) if perf_velocities else 0,
             'velocity_std': round(statistics.stdev(perf_velocities), 1) if len(perf_velocities) > 1 else 0,
-            'dynamic_deviation': round(dynamic_deviation, 1),
+            'dynamic_deviation': round(dynamic_deviation, 1) if dynamic_deviation is not None else None,
+            'dynamic_deviation_source': 'aligned_pairs' if dynamic_deviation is not None else 'unavailable',
             'dynamic_patterns': dynamic_patterns,
             'expression_level': self._assess_expression_level(perf_velocities)
         }
@@ -484,7 +530,7 @@ class ErrorAnalysis:
             total_score += (accuracy / 100) * weights['note_accuracy']
             total_weight += weights['note_accuracy']
         
-        if 'timing_errors' in self.metrics:
+        if 'timing_errors' in self.metrics and self.metrics['timing_errors'].get('available', True):
             timing_score = self._calculate_timing_score()
             component_scores['timing'] = timing_score
             total_score += timing_score * weights['timing_errors']
@@ -501,6 +547,25 @@ class ErrorAnalysis:
             component_scores['dynamics'] = dynamic_score
             total_score += dynamic_score * weights['dynamic_control']
             total_weight += weights['dynamic_control']
+
+        if 'articulation' in self.metrics:
+            articulation_score = float(self.metrics['articulation'].get('articulation_consistency', 0.5))
+            articulation_score = max(0.0, min(1.0, articulation_score))
+            component_scores['articulation'] = articulation_score
+            total_score += articulation_score * weights['articulation']
+            total_weight += weights['articulation']
+
+        if 'phrasing' in self.metrics:
+            phrasing_data = self.metrics.get('phrasing', {})
+            phr_cons = phrasing_data.get('phrase_consistency', None)
+            if isinstance(phr_cons, (int, float)):
+                phrasing_score = 1.0 / (1.0 + abs(float(phr_cons)) * 10.0)
+            else:
+                phrasing_score = 0.5
+            phrasing_score = max(0.0, min(1.0, phrasing_score))
+            component_scores['phrasing'] = phrasing_score
+            total_score += phrasing_score * weights['phrasing']
+            total_weight += weights['phrasing']
         
         # Normalize score
         if total_weight > 0:
@@ -549,13 +614,13 @@ class ErrorAnalysis:
                 dyn = self.metrics['dynamic_control']
                 ref_range = dyn.get('reference_dynamic_range', None)
                 perf_range = dyn.get('dynamic_range', 0)
-                deviation = dyn.get('dynamic_deviation', 0)
+                deviation = dyn.get('dynamic_deviation', None)
 
                 # Only recommend more range if the reference actually has more range
                 # OR if deviation shows they are not matching reference dynamics
                 if ref_range is not None and ref_range > 20 and perf_range < ref_range * 0.6:
                     recommendations.append("Increase dynamic range to match the reference: practice crescendos and decrescendos")
-                elif deviation > 12:
+                elif isinstance(deviation, (int, float)) and deviation > 12:
                     recommendations.append("Work on matching the reference dynamics more closely (control velocity changes)")
 
         # Rhythmic recommendations
@@ -563,8 +628,17 @@ class ErrorAnalysis:
             consistency = self.metrics['rhythmic_consistency'].get('duration_consistency_score', 0)
             if consistency < 0.7:
                 recommendations.append("Work on rhythmic consistency: practice with subdivision counting")
-        
-        self.practice_recommendations = recommendations
+
+        deduped: List[str] = []
+        seen = set()
+        for rec in recommendations:
+            key = rec.strip().lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            deduped.append(rec)
+
+        self.practice_recommendations = deduped
     
     # Helper Methods
     
@@ -715,8 +789,14 @@ class ErrorAnalysis:
     def _calculate_timing_score(self) -> float:
         """Calculate timing score (0-1)."""
         timing_metrics = self.metrics.get('timing_errors', {})
-        mean_error = abs(timing_metrics.get('mean_error_ms', 0)) / 1000  # Convert to seconds
-        std_error = timing_metrics.get('std_error_ms', 0) / 1000
+        if not timing_metrics.get('available', True):
+            return 0.5
+
+        mean_raw = timing_metrics.get('mean_error_ms', 0)
+        std_raw = timing_metrics.get('std_error_ms', 0)
+
+        mean_error = abs(float(mean_raw)) / 1000 if isinstance(mean_raw, (int, float)) else 0.0
+        std_error = float(std_raw) / 1000 if isinstance(std_raw, (int, float)) else 0.0
         
         # Lower errors = higher score
         timing_score = 1 / (1 + mean_error * 10 + std_error * 5)
@@ -827,9 +907,10 @@ class ErrorAnalysis:
                 strengths.append("Excellent note accuracy")
         
         if 'timing_errors' in self.metrics:
-            rushing = self.metrics['timing_errors'].get('rushing_percentage', 0)
-            dragging = self.metrics['timing_errors'].get('dragging_percentage', 0)
-            if rushing < 10 and dragging < 10:
+            timing = self.metrics['timing_errors']
+            rushing = timing.get('rushing_percentage', 0)
+            dragging = timing.get('dragging_percentage', 0)
+            if timing.get('available', True) and rushing < 10 and dragging < 10:
                 strengths.append("Good timing control")
         
         if 'dynamic_control' in self.metrics:

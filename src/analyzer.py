@@ -84,12 +84,8 @@ class MIDIAnalyzer:
 
         aligned_notes, alignment_stats, alignment_debug = self._run_time_alignment_compat(aligner)
 
-        # 3) Phrase segmentation (optional)
-        print("3. Segmenting musical phrases...")
-        segmented_data = {"phrases": []}  # keep disabled unless you enable PhraseSegmentation module
-
-        # 4) Error analysis
-        print("4. Analyzing performance errors...")
+        # 3) Error analysis
+        print("3. Analyzing performance errors...")
         error_analyzer = ErrorAnalysis(
             {
                 "reference": reference_parsed,
@@ -99,14 +95,13 @@ class MIDIAnalyzer:
         )
         error_analysis = error_analyzer.analyze_performance()
 
-        # 5) JSON summarization for GPT
-        print("5. Generating comprehensive summary...")
+        # 4) JSON summarization for GPT
+        print("4. Generating comprehensive summary...")
         analysis_data = {
             "reference_data": reference_parsed,
             "performance_data": performance_parsed,
             "alignment": aligned_notes,
             "alignment_statistics": alignment_stats,
-            "phrases": segmented_data,
             "error_analysis": error_analysis,
         }
         summarizer = JSONSummarization(analysis_data)
@@ -124,7 +119,6 @@ class MIDIAnalyzer:
                 "statistics": alignment_stats,
                 "debug": alignment_debug,
             },
-            "musical_structure": segmented_data,
             "performance_analysis": error_analysis,
             "gpt_ready_summary": gpt_summary,
         }

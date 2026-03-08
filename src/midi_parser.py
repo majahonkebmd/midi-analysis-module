@@ -149,13 +149,89 @@ class MIDIParser:
     
     # Helper methods would go here...
     def _get_beat_position(self, time: float) -> float:
-        """Calculate beat position within measure."""
-        # Implementation depends on time signature
-        pass
+        """Return absolute fractional beat index (0-based) at `time`."""
+        if self.midi_data is None:
+            return 0.0
+
+        beats = self.midi_data.get_beats()
+        if beats is None or len(beats) == 0:
+            return 0.0
+
+        beats_arr = np.asarray(beats, dtype=float)
+        idx = int(np.searchsorted(beats_arr, float(time), side='right') - 1)
+
+        if idx < 0:
+            if len(beats_arr) > 1:
+                beat_len = max(float(beats_arr[1] - beats_arr[0]), 1e-6)
+            else:
+                beat_len = 0.5
+            return float((time - beats_arr[0]) / beat_len)
+
+        if idx >= len(beats_arr) - 1:
+            if len(beats_arr) > 1:
+                beat_len = max(float(beats_arr[-1] - beats_arr[-2]), 1e-6)
+            else:
+                beat_len = 0.5
+            return float((len(beats_arr) - 1) + ((time - beats_arr[-1]) / beat_len))
+
+        beat_len = max(float(beats_arr[idx + 1] - beats_arr[idx]), 1e-6)
+        return float(idx + ((time - beats_arr[idx]) / beat_len))
     
     def _get_measure_position(self, time: float) -> Dict:
-        """Calculate measure and beat position."""
-        pass
+        """Return measure-aware position metadata for `time`."""
+        if self.midi_data is None:
+            return {
+                'measure': 1,
+                'beat_in_measure': 1.0,
+                'beats_per_measure': 4.0,
+                'time_signature': '4/4'
+            }
+
+        t = float(time)
+        raw_downbeats = self.midi_data.get_downbeats()
+        if raw_downbeats is None:
+            downbeats = np.asarray([], dtype=float)
+        else:
+            downbeats = np.asarray(raw_downbeats, dtype=float)
+
+        # Active time signature at this moment (fallback 4/4).
+        numerator = 4
+        denominator = 4
+        for ts in sorted(self.midi_data.time_signature_changes, key=lambda x: x.time):
+            if float(ts.time) <= t:
+                numerator = int(ts.numerator)
+                denominator = int(ts.denominator)
+            else:
+                break
+
+        beats_per_measure = float(numerator) * (4.0 / float(denominator))
+
+        if downbeats.size == 0:
+            abs_beat = self._get_beat_position(t)
+            measure_number = int(max(0.0, abs_beat) // max(beats_per_measure, 1e-6)) + 1
+            beat_in_measure = (max(0.0, abs_beat) % max(beats_per_measure, 1e-6)) + 1.0
+            return {
+                'measure': measure_number,
+                'beat_in_measure': round(float(beat_in_measure), 3),
+                'beats_per_measure': round(beats_per_measure, 3),
+                'time_signature': f'{numerator}/{denominator}'
+            }
+
+        measure_idx = int(np.searchsorted(downbeats, t, side='right') - 1)
+        if measure_idx < 0:
+            measure_idx = 0
+
+        measure_start = float(downbeats[measure_idx])
+        beat_in_measure = (self._get_beat_position(t) - self._get_beat_position(measure_start)) + 1.0
+        if beat_in_measure < 1.0:
+            beat_in_measure = 1.0
+
+        return {
+            'measure': int(measure_idx + 1),
+            'beat_in_measure': round(float(beat_in_measure), 3),
+            'beats_per_measure': round(beats_per_measure, 3),
+            'time_signature': f'{numerator}/{denominator}'
+        }
     
     def _detect_chords(self, notes: List[Dict]) -> List[Dict]:
         """Simple chord detection algorithm."""
@@ -185,8 +261,5 @@ class MIDIParser:
     
     def _analyze_articulation(self, notes: List[Dict]) -> Dict:
         """Analyze articulation patterns (staccato, legato)."""
-        return {}
-    
-    def get_pretty_midi_object():
         return {}
     

@@ -293,6 +293,9 @@ class TimeAlignment:
         missing = [p for p in pairs if p.get("error_type") == "missing_note"]
         extra = [p for p in pairs if p.get("error_type") in ("extra_note", "ornament_insertion")]
 
+        min_reliable_aligned = max(10, int(0.05 * max(1, len(self.ref_notes))))
+        is_reliable = len(aligned) >= min_reliable_aligned
+
         stats: Dict[str, Any] = {
             "total_reference_notes": int(len(self.ref_notes)),
             "total_performance_notes": int(len(self.perf_notes)),
@@ -300,6 +303,17 @@ class TimeAlignment:
             "missing_notes": int(len(missing)),
             "extra_notes": int(len(extra)),
             "alignment_rate": float(len(aligned) / max(1, len(self.ref_notes))),
+            "reliability": {
+                "is_reliable": bool(is_reliable),
+                "insufficient_alignment": bool(not is_reliable),
+                "aligned_note_count": int(len(aligned)),
+                "minimum_required_aligned_notes": int(min_reliable_aligned),
+                "reason": (
+                    None
+                    if is_reliable
+                    else "too_few_aligned_pairs_for_stable_timing_and_pitch_metrics"
+                ),
+            },
         }
         if aligned:
             td = np.array([abs(float(p["time_difference"])) for p in aligned], dtype=float)
@@ -778,6 +792,8 @@ class TimeAlignment:
 
         out: List[Dict[str, Any]] = []
         order = self.selected_hypothesis.phrase_order
+        matched_perf_keys: set = set()
+        emitted_extra_perf_keys: set = set()
 
         # Build event indices per phrase on reference
         phrase_events_ref: List[List[int]] = []
@@ -821,7 +837,9 @@ class TimeAlignment:
                 for a, b in matches:
                     r = r_ev.notes[a]
                     p = p_ev.notes[b]
+                    p_key = self._note_key(p)
                     cost = self._note_cost(r, p)
+                    matched_perf_keys.add(p_key)
                     out.append({
                         "reference_note": self._note_to_dict(r),
                         "performance_note": self._note_to_dict(p),
@@ -836,7 +854,12 @@ class TimeAlignment:
                 for a in m_unr:
                     out.append(self._emit_missing(r_ev.notes[a], "hungarian_unmatched_ref", phrase_idx))
                 for b in m_unp:
-                    out.append(self._emit_extra(p_ev.notes[b], "hungarian_unmatched_perf", phrase_idx))
+                    p = p_ev.notes[b]
+                    p_key = self._note_key(p)
+                    if p_key in matched_perf_keys or p_key in emitted_extra_perf_keys:
+                        continue
+                    emitted_extra_perf_keys.add(p_key)
+                    out.append(self._emit_extra(p, "hungarian_unmatched_perf", phrase_idx))
 
             # Unmatched events -> missing/extra
             for i_local in unr:
@@ -844,6 +867,10 @@ class TimeAlignment:
                     out.append(self._emit_missing(r, "dp_unmatched_ref_event", phrase_idx))
             for j_local in unp:
                 for p in perf_seq[j_local].notes:
+                    p_key = self._note_key(p)
+                    if p_key in matched_perf_keys or p_key in emitted_extra_perf_keys:
+                        continue
+                    emitted_extra_perf_keys.add(p_key)
                     out.append(self._emit_extra(p, "dp_unmatched_perf_event", phrase_idx))
 
         return out
@@ -1062,7 +1089,23 @@ class TimeAlignment:
                     if nearest and abs(nearest[0] - t) <= 0.12 and (pitch - nearest[1]) % 12 in (0, 3, 4, 7, 9):
                         p["error_type"] = "ornament_insertion"
 
-        return fixed + non
+        matched_perf_keys = {
+            self._note_dict_key(p["performance_note"])
+            for p in fixed
+            if p.get("performance_note") is not None
+        }
+        dedup_non: List[Dict[str, Any]] = []
+        seen_extra_perf_keys: set = set()
+        for p in non:
+            et = p.get("error_type")
+            if et in {"extra_note", "ornament_insertion"} and p.get("performance_note") is not None:
+                key = self._note_dict_key(p["performance_note"])
+                if key in matched_perf_keys or key in seen_extra_perf_keys:
+                    continue
+                seen_extra_perf_keys.add(key)
+            dedup_non.append(p)
+
+        return fixed + dedup_non
 
     # -----------------------------
     # Output helpers
@@ -1078,6 +1121,28 @@ class TimeAlignment:
             "track_id": n.track_id,
             "instrument": n.instrument,
         }
+
+    def _note_key(self, n: NoteEvent) -> Tuple[int, int, int, int, int, int, str]:
+        return (
+            int(round(n.onset * 1_000_000)),
+            int(round(n.offset * 1_000_000)),
+            int(round(n.duration * 1_000_000)),
+            int(n.pitch),
+            int(n.velocity),
+            int(n.track_id) if n.track_id is not None else -1,
+            str(n.instrument) if n.instrument is not None else "",
+        )
+
+    def _note_dict_key(self, d: Dict[str, Any]) -> Tuple[int, int, int, int, int, int, str]:
+        return (
+            int(round(float(d.get("start", 0.0)) * 1_000_000)),
+            int(round(float(d.get("end", 0.0)) * 1_000_000)),
+            int(round(float(d.get("duration", 0.0)) * 1_000_000)),
+            int(d.get("pitch", 0)),
+            int(d.get("velocity", 0)),
+            int(d.get("track_id")) if d.get("track_id") is not None else -1,
+            str(d.get("instrument")) if d.get("instrument") is not None else "",
+        )
 
     def _emit_missing(self, r: NoteEvent, reason: str, phrase_idx: Optional[int] = None) -> Dict[str, Any]:
         d = {
